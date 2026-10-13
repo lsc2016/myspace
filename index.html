@@ -184,6 +184,20 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
 .toast{position:fixed;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));
   background:var(--ink);color:var(--bg);border-radius:12px;padding:10px 16px;font-size:14px;box-shadow:var(--shadow);max-width:90%}
 [hidden]{display:none!important}
+/* 가로로 넓은 화면(아이패드 가로 등): 왼쪽 목록·날짜, 오른쪽 큰 지도 */
+body.wide .app{max-width:none;display:grid;grid-template-columns:400px 1fr;grid-template-rows:auto 1fr auto}
+body.wide .top{grid-column:1;grid-row:1}
+body.wide main{grid-column:1;grid-row:2}
+body.wide .tabs{grid-column:1;grid-row:3}
+body.wide .tabs button[data-tab="map"]{display:none}
+body.wide #view-map{position:fixed;left:400px;top:0;right:0;bottom:0;border-left:1px solid var(--line)}
+body.wide #view-map[hidden]{display:block!important}
+body.wide #mapCats{display:none}
+body.wide .pickbar{bottom:16px;max-width:520px}
+body.wide .fab{right:auto;left:384px;transform:translateX(-100%)}
+body.wide .sheet{justify-content:flex-start}
+body.wide .sheet-body{max-width:420px;height:100%;max-height:100%;border-radius:0}
+body.wide .toast{left:200px}
 @media (prefers-reduced-motion:no-preference){.sheet-body{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
 </style>
 </head>
@@ -433,7 +447,7 @@ function openPlace(id){
   const del = body.querySelector('#delPlace');
   del.onclick = () => { if(del.dataset.armed){ deletePlace(id); closeSheet(); toast('삭제했어요'); } else { del.dataset.armed = 1; del.textContent = '한 번 더 누르면 삭제'; } };
   const som = body.querySelector('#showOnMap');
-  if(som) som.onclick = () => { closeSheet(); S.route = null; switchTab('map'); setTimeout(() => focusPlace(p), 120); };
+  if(som) som.onclick = () => { closeSheet(); S.route = null; showMap(); setTimeout(() => focusPlace(p), 120); };
   body.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(p, b.dataset.go));
 }
 
@@ -606,14 +620,16 @@ function renderDayPanel(){
       </div>`;
     el.querySelector('#dayAdd').onclick = () => openPlacePicker(S.day);
     el.querySelector('#dayAll').onclick = () => { S.day = null; renderCal(); };
-    const r = el.querySelector('#dayRoute'); if(r) r.onclick = () => { S.route = S.day; S.fit = true; switchTab('map'); };
+    const r = el.querySelector('#dayRoute'); if(r) r.onclick = () => { S.route = S.day; S.fit = true; showMap(); };
   } else {
     const ds = [...new Set(visits.filter(v => v.date.startsWith(S.ym)).map(v => v.date))].sort().reverse();
     el.innerHTML = ds.length ? ds.map(d => `<div class="daygroup"><p class="dg-date">${prettyDate(d)}${d>t?' · 예정':''}</p>${dayVisits(d).map(v=>stopHtml(v,null)).join('')}</div>`).join('')
       : `<p class="empty">이 달에는 기록이 없어요.<br>날짜를 눌러 장소를 넣어 보세요.</p>`;
   }
 }
-$('#cal').addEventListener('click', e => { const b = e.target.closest('[data-d]'); if(!b) return; S.day = (S.day === b.dataset.d ? null : b.dataset.d); renderCal(); });
+$('#cal').addEventListener('click', e => { const b = e.target.closest('[data-d]'); if(!b) return; S.day = (S.day === b.dataset.d ? null : b.dataset.d); renderCal();
+  /* 넓은 화면: 날짜를 고르면 오른쪽 지도에 그날 경로가 바로 보임 */
+  if(isWide()){ S.route = S.day && dayVisits(S.day).length ? S.day : null; S.fit = true; renderMap(); } });
 $('#dayPanel').addEventListener('click', e => { const s = e.target.closest('.stop'); if(!s) return;
   const v = visits.find(x => x.id === s.dataset.vid); if(v && S.day) openVisitEditor(v.placeId, v, 'day'); else openPlace(s.dataset.pid); });
 function shiftMonth(k){ const [y, m] = S.ym.split('-').map(Number); const d = new Date(y, m-1+k, 1); S.ym = d.getFullYear() + '-' + pad(d.getMonth()+1); S.day = null; renderCal(); }
@@ -633,7 +649,7 @@ async function initKakao(){
     kakao.maps.event.addListener(map, 'click', e => onMapClick(e.latLng));
     kakao.maps.event.addListener(map, 'zoom_changed', labelMode);
     labelMode(); mapMsg(null);
-    if(S.tab === 'map'){ map.relayout(); renderMap(); }
+    if(mapVisible()){ map.relayout(); renderMap(); }
   }catch(e){ mapMsg('카카오 지도를 불러오지 못했어요.<br>키와 등록한 사이트 주소, "카카오맵 사용 설정"을 확인해 주세요.'); }
   loadScript('https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js').then(() => { try{ if(!Kakao.isInitialized()) Kakao.init(CFG.KAKAO_JS_KEY); }catch(e){} }).catch(() => {});
 }
@@ -670,7 +686,7 @@ function pinEl(cls, color, text, label, onClick){
   return el;
 }
 function renderMap(){
-  if(!map || S.tab !== 'map') return;
+  if(!map || !mapVisible()) return;
   clearOverlays();
   const banner = $('#routeBanner'), bounds = new kakao.maps.LatLngBounds(); let any = false;
   if(S.route){
@@ -712,12 +728,26 @@ function onMapClick(latlng){
 function clearPick(){ $('#pickBar').hidden = true; if(tempOverlay){ tempOverlay.setMap(null); tempOverlay = null; } }
 
 /* ───────── 탭 ───────── */
+const wideMQ = window.matchMedia('(min-width: 900px)');
+const isWide = () => wideMQ.matches;
+const mapVisible = () => isWide() || S.tab === 'map';
+function applyLayout(){
+  document.body.classList.toggle('wide', isWide());
+  if(isWide() && S.tab === 'map') S.tab = 'list';
+  switchTab(S.tab);
+}
+wideMQ.addEventListener ? wideMQ.addEventListener('change', applyLayout) : wideMQ.addListener(applyLayout);
+/* 지도 탭으로 가거나(좁은 화면), 오른쪽 지도를 그대로 쓰기(넓은 화면) */
+function showMap(){ if(isWide()){ if(map){ map.relayout(); renderMap(); } } else switchTab('map'); }
 function switchTab(t){
+  if(isWide() && t === 'map') t = 'list';
   S.tab = t;
+  if(isWide() && t === 'list' && S.route){ S.route = null; S.fit = true; }
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   ['list','map','date'].forEach(k => $('#view-' + k).hidden = (k !== t));
-  if(t !== 'map') clearPick();
-  if(t === 'map'){ S.fit = true; if(map){ setTimeout(() => { map.relayout(); renderMap(); }, 30); } }
+  if(!mapVisible()) clearPick();
+  if(t === 'map'){ S.fit = true; }
+  if(mapVisible() && map){ setTimeout(() => { map.relayout(); renderMap(); }, 30); }
   if(t === 'date') renderCal();
 }
 document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if(b) switchTab(b.dataset.tab); });
@@ -799,7 +829,7 @@ function toMarkdown(){
 $('#btnSettings').onclick = openSettings;
 
 /* ───────── 시작 ───────── */
-loadLocal(); renderAll(); switchTab('list');
+loadLocal(); renderAll(); applyLayout();
 setSync(online() ? '' : '이 기기에만 저장', online() ? '' : 'warn');
 pull(); initKakao();
 document.addEventListener('visibilitychange', () => { if(!document.hidden && $('#sheet').hidden) pull(); });
