@@ -438,7 +438,11 @@ function openPlace(id){
 
 /* ───────── 내비로 출발 ───────── */
 const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-function go(p, app){
+async function go(p, app){
+  if(p.lat == null && p.address){
+    const c = await addrToCoord(p.address);
+    if(c){ p.lat = c.lat; p.lng = c.lng; savePlace({...p}); }
+  }
   if(p.lat == null){ toast('위치 정보가 없는 장소예요. "정보 고치기"에서 다시 검색해 주세요.'); return; }
   const n = encodeURIComponent(p.name);
   if(!isMobile()){ window.open(`https://map.kakao.com/link/to/${n},${p.lat},${p.lng}`, '_blank'); return; }
@@ -480,7 +484,7 @@ function openEditor(orig, opts = {}){
     <div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="fSave">저장</button></div>`);
   const body = $('#sheetBody');
   const ksq = body.querySelector('#ksq'), kres = body.querySelector('#kres');
-  let found = [];
+  let found = [], picked = false;
   const doSearch = async () => {
     const q = ksq.value.trim(); if(!q) return;
     const r = await kakaoSearch(q);
@@ -492,8 +496,8 @@ function openEditor(orig, opts = {}){
   ksq.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); doSearch(); } });
   ksq.addEventListener('search', doSearch);
   kres.addEventListener('click', e => { const li = e.target.closest('[data-i]'); if(!li) return; const d = found[li.dataset.i];
-    p.lat = Number(d.y); p.lng = Number(d.x); p.url = d.place_url || ''; p.phone = d.phone || '';
-    body.querySelector('#fName').value = d.place_name;
+    picked = true; p.lat = Number(d.y); p.lng = Number(d.x); p.url = d.place_url || ''; p.phone = d.phone || '';
+    const fn = body.querySelector('#fName'); if(d.category_name !== '주소' || !fn.value.trim()) fn.value = d.place_name;
     body.querySelector('#fAddr').value = d.road_address_name || d.address_name;
     if(!body.querySelector('#fCat').value){ const c = KAKAO_GROUP[d.category_group_code]; if(c) setCat(c); }
     const pk = body.querySelector('#picked'); pk.hidden = false; pk.innerHTML = `📍 위치 저장됨 · ${esc(d.place_name)}`;
@@ -501,11 +505,18 @@ function openEditor(orig, opts = {}){
   const setCat = c => { body.querySelector('#fCat').value = c; body.querySelectorAll('#fCats .chip').forEach(b => b.classList.toggle('on', b.dataset.c === c)); };
   body.querySelector('#fCats').onclick = e => { const b = e.target.closest('[data-c]'); if(b) setCat(b.dataset.c); };
   body.querySelector('#fCat').oninput = e => setCat(e.target.value.trim());
-  body.querySelector('#fSave').onclick = () => {
+  body.querySelector('#fSave').onclick = async () => {
     p.name = body.querySelector('#fName').value.trim();
     if(!p.name){ toast('이름을 넣어 주세요'); return; }
     p.category = body.querySelector('#fCat').value.trim() || '기타';
-    p.address = body.querySelector('#fAddr').value.trim();
+    const newAddr = body.querySelector('#fAddr').value.trim();
+    /* 위치가 없거나, 검색 없이 주소만 바꿨으면 주소로 위치 찾기 */
+    if(newAddr && !picked && (p.lat == null || newAddr !== (orig ? orig.address : ''))){
+      const c = await addrToCoord(newAddr);
+      if(c){ p.lat = c.lat; p.lng = c.lng; }
+      else if(p.lat == null) toast('이 주소로는 위치를 못 찾았어요. 위 검색칸에서 찾아 골라 주세요.');
+    }
+    p.address = newAddr;
     p.memo = body.querySelector('#fMemo').value;
     savePlace(p);
     if(isNew){ const d = body.querySelector('#fDate').value;
@@ -628,7 +639,23 @@ function kakaoSearch(q){
   return new Promise(res => {
     if(!svcPlaces) return res(null);
     const opt = {size: 15}; if(map) opt.location = map.getCenter();
-    svcPlaces.keywordSearch(q, (data, status) => res(status === kakao.maps.services.Status.OK ? data : []), opt);
+    svcPlaces.keywordSearch(q, (data, status) => {
+      const kw = status === kakao.maps.services.Status.OK ? data : [];
+      /* 집 주소처럼 가게 이름이 아닌 것은 주소 검색으로도 찾기 */
+      geocoder.addressSearch(q, (r, st) => {
+        const ad = st === kakao.maps.services.Status.OK ? r.map(a => ({place_name: a.address_name,
+          road_address_name: (a.road_address && a.road_address.address_name) || '', address_name: a.address_name,
+          x: a.x, y: a.y, category_name: '주소', category_group_code: '', phone: '', place_url: ''})) : [];
+        res([...ad, ...kw]);
+      });
+    }, opt);
+  });
+}
+/* 주소 글자만 있을 때 위치(좌표) 찾기 */
+function addrToCoord(addr){
+  return new Promise(res => {
+    if(!geocoder || !addr) return res(null);
+    geocoder.addressSearch(addr, (r, st) => res(st === kakao.maps.services.Status.OK && r[0] ? {lat: Number(r[0].y), lng: Number(r[0].x)} : null));
   });
 }
 function clearOverlays(){ overlays.forEach(o => o.setMap(null)); overlays = []; if(routeLine){ routeLine.setMap(null); routeLine = null; } }
