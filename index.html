@@ -268,7 +268,7 @@ const CAT_COLORS = {'카페':'#B7791F','음식점':'#D1495B','관광지':'#2E86A
 const EXTRA = ['#C2410C','#0F766E','#7C3AED','#BE185D','#4D7C0F','#1D4ED8','#A16207'];
 function catColor(c){ if(CAT_COLORS[c]) return CAT_COLORS[c]; let h=0; for(const ch of (c||'')) h=(h*31+ch.charCodeAt(0))>>>0; return EXTRA[h%EXTRA.length]; }
 const KAKAO_GROUP = {CE7:'카페', FD6:'음식점', AT4:'관광지', MT1:'마트', CS2:'마트'};
-const NAVS = {kakaonavi:'카카오내비', tmap:'티맵', naver:'네이버 지도', kakaomap:'카카오맵'};
+const NAVS = {tmap:'티맵', naver:'네이버 내비', kakaonavi:'카카오내비', kakaomap:'카카오맵'};
 
 function lsGet(k, def){ try{ const v=localStorage.getItem(k); return v ? JSON.parse(v) : def; }catch(e){ return def; } }
 function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
@@ -400,7 +400,7 @@ $('#sort').addEventListener('change', e => { S.sort = e.target.value; lsSet('ms-
 function openPlace(id){
   const p = placeById(id); if(!p) return;
   const vs = visits.filter(v => v.placeId === id).sort((a,b) => (b.date+b.time).localeCompare(a.date+a.time));
-  const t = today(); const def = lsGet('ms-navi','kakaonavi');
+  const t = today(); const def = lsGet('ms-navi','tmap');
   openSheet(`
     <div class="sh-title"><h2>${esc(p.name)}</h2></div>
     <div class="row" style="margin-top:6px;align-items:center">
@@ -727,7 +727,7 @@ function renderAll(){ renderCats(); renderList(); if(S.tab === 'date') renderCal
 
 /* ───────── 설정 · 한꺼번에 추가 · 백업 ───────── */
 function openSettings(){
-  const def = lsGet('ms-navi','kakaonavi');
+  const def = lsGet('ms-navi','tmap');
   openSheet(`<div class="sh-title"><h2>설정</h2></div>
     <div class="card"><h3>저장소</h3>
       <p style="margin:0">${online() ? '구글 시트에 저장 중 — 휴대폰·맥북에서 같은 목록이 보여요.' : '<b>아직 이 기기에만 저장돼요.</b> 처음 받은 <b>연결 링크</b>로 한 번 열면 모든 기기에서 같이 보입니다.'}</p>
