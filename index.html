@@ -169,6 +169,7 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
 .field input,.field textarea,.field select{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 12px;width:100%}
 .field textarea{min-height:80px;resize:vertical}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sbox{display:flex;gap:8px}.sbox input{flex:1;min-width:0}
 .results{list-style:none;margin:8px 0 0;padding:0;max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
 .results li{padding:10px 12px;border-top:1px solid var(--line);cursor:pointer}
 .results li:first-child{border-top:0}
@@ -466,7 +467,7 @@ function openEditor(orig, opts = {}){
   openSheet(`
     <div class="sh-title"><h2>${isNew ? '장소 추가' : '정보 고치기'}</h2></div>
     <div class="field"><label for="ksq">${isNew ? '이름으로 검색' : '위치 다시 찾기'}</label>
-      <input id="ksq" type="search" placeholder="예: 스타벅스 광화문점, 경복궁" enterkeyhint="search">
+      <div class="sbox"><input id="ksq" type="search" placeholder="가게 이름이나 주소 (예: 경복궁, 테헤란로 152)" enterkeyhint="search"><button type="button" class="btn primary" id="ksBtn">검색</button></div>
       <ul id="kres" class="results" hidden></ul>
       ${!window.kakao || !kakao.maps || !kakao.maps.services ? '<p class="hint">카카오 지도가 연결되지 않아 검색은 안 돼요. 직접 입력할 수 있어요.</p>' : ''}
     </div>
@@ -495,6 +496,9 @@ function openEditor(orig, opts = {}){
   };
   ksq.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); doSearch(); } });
   ksq.addEventListener('search', doSearch);
+  body.querySelector('#ksBtn').onclick = doSearch;
+  /* 글자를 치다 잠깐 멈추면 저절로 검색 */
+  let ksT; ksq.addEventListener('input', () => { clearTimeout(ksT); if(ksq.value.trim().length >= 2) ksT = setTimeout(doSearch, 500); });
   kres.addEventListener('click', e => { const li = e.target.closest('[data-i]'); if(!li) return; const d = found[li.dataset.i];
     picked = true; p.lat = Number(d.y); p.lng = Number(d.x); p.url = d.place_url || ''; p.phone = d.phone || '';
     const fn = body.querySelector('#fName'); if(d.category_name !== '주소' || !fn.value.trim()) fn.value = d.place_name;
