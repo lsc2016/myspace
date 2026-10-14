@@ -56,6 +56,14 @@ main{flex:1;min-height:0;position:relative}
 
 /* 장소 목록 */
 .plist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.selbar{position:sticky;top:0;z-index:4;display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--ink);color:var(--bg);
+  border-radius:12px;padding:8px 10px;margin-bottom:8px;font-size:13px;font-weight:600}
+.selbar span{flex:1}
+.selbar .btn{background:transparent;color:inherit;border-color:rgba(255,255,255,.3)}
+.selbar .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.selbar .btn.danger{color:#FCA5A5}
+.pitem .ck{width:22px;height:22px;flex:none;margin-top:3px;accent-color:var(--accent)}
+.pitem.checked{border-color:var(--accent);background:var(--soft)}
 .pitem{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);
   border-radius:14px;padding:12px 14px;cursor:pointer}
 .pitem .dot{width:10px;height:10px;border-radius:50%;margin-top:7px;flex:none}
@@ -216,12 +224,19 @@ body.wide .toast{left:200px}
       <div class="searchbar"><input id="q" type="search" placeholder="내 장소에서 찾기 (이름·주소·메모)"></div>
       <div id="cats" class="chips"></div>
       <div class="listhead"><span id="count"></span>
+        <span class="row" style="gap:6px;align-items:center"><button class="btn small" id="selToggle">선택</button>
         <select id="sort" aria-label="정렬">
           <option value="recent">최근 추가순</option>
           <option value="visit">최근 방문순</option>
           <option value="name">이름순</option>
           <option value="rating">별점순</option>
-        </select>
+        </select></span>
+      </div>
+      <div id="selBar" class="selbar" hidden>
+        <span id="selCount">0곳 선택</span>
+        <button class="btn small" id="selAll">전체 선택</button>
+        <button class="btn small primary" id="selCat">분류 바꾸기</button>
+        <button class="btn small danger" id="selDel">삭제</button>
       </div>
       <ul id="list" class="plist"></ul>
     </section>
@@ -412,18 +427,43 @@ function renderList(){
     rating:(a,b)=>b.rating-a.rating };
   arr.sort(by[S.sort] || by.recent);
   $('#count').textContent = `${arr.length}곳`;
+  if(S.sel) $('#selCount').textContent = `${S.selected.size}곳 선택`;
   if(!places.length){
     $('#list').innerHTML = `<li class="empty"><strong>아직 저장한 장소가 없어요</strong>아래 <b>＋ 장소 추가</b>를 눌러 이름으로 검색하면<br>주소와 위치가 자동으로 들어갑니다.<br><br>내비 즐겨찾기를 한꺼번에 옮기려면<br>오른쪽 위 <b>⋯</b> → <b>여러 곳 한꺼번에 추가</b></li>`;
     return;
   }
   if(!arr.length){ $('#list').innerHTML = `<li class="empty">조건에 맞는 장소가 없어요.</li>`; return; }
   $('#list').innerHTML = arr.map(p => { const s = st[p.id] || {};
-    return `<li class="pitem" data-id="${esc(p.id)}"><span class="dot" style="background:${catColor(p.category)}"></span><div class="body">
+    return `<li class="pitem ${S.sel && S.selected.has(p.id)?'checked':''}" data-id="${esc(p.id)}">${S.sel?`<input type="checkbox" class="ck" ${S.selected.has(p.id)?'checked':''} aria-label="선택">`:''}<span class="dot" style="background:${catColor(p.category)}"></span><div class="body">
       <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.address || '주소 없음')}</div>
       <div class="meta">${p.rating?`<span class="stars">${starText(p.rating)}</span>`:''}${s.n?`<span>${s.n}번 다녀옴 · 마지막 ${shortDate(s.last)}</span>`:''}${s.next?`<b>예정 ${shortDate(s.next)}</b>`:''}${p.lat==null?'<span>위치 없음</span>':''}</div>
     </div></li>`; }).join('');
 }
-$('#list').addEventListener('click', e => { const li = e.target.closest('.pitem'); if(li) openPlace(li.dataset.id); });
+$('#list').addEventListener('click', e => { const li = e.target.closest('.pitem'); if(!li) return;
+  if(S.sel){ const id = li.dataset.id; S.selected.has(id) ? S.selected.delete(id) : S.selected.add(id); renderList(); }
+  else openPlace(li.dataset.id); });
+
+/* ───────── 여러 곳 선택해서 한꺼번에 바꾸기 ───────── */
+S.sel = false; S.selected = new Set();
+function setSel(on){ S.sel = on; if(!on) S.selected.clear(); $('#selBar').hidden = !on; $('#selToggle').textContent = on ? '취소' : '선택'; $('#selToggle').classList.toggle('primary', on); $('#fab').hidden = on; renderList(); }
+$('#selToggle').onclick = () => setSel(!S.sel);
+$('#selAll').onclick = () => { const arr = filtered(); const all = arr.every(p => S.selected.has(p.id)); arr.forEach(p => all ? S.selected.delete(p.id) : S.selected.add(p.id)); renderList(); };
+$('#selCat').onclick = () => {
+  if(!S.selected.size){ toast('먼저 장소를 체크해 주세요'); return; }
+  const n = S.selected.size;
+  openSheet(`<div class="sh-title"><h2>${n}곳의 분류 바꾸기</h2></div><p class="addr">어느 분류로 옮길까요?</p>
+    <div class="chips" id="bcCats" style="flex-wrap:wrap;padding:8px 0">${allCats().map(c=>`<button type="button" class="chip" data-c="${esc(c)}" style="font-size:16px;padding:10px 16px"><i style="background:${catColor(c)}"></i>${esc(c)}</button>`).join('')}</div>
+    <div class="actions"><button class="btn" data-close>취소</button></div>`);
+  $('#bcCats').onclick = e => { const b = e.target.closest('[data-c]'); if(!b) return;
+    places.forEach(p => { if(S.selected.has(p.id) && p.category !== b.dataset.c){ p.category = b.dataset.c; p.updatedAt = nowIso(); queue('upsertPlace', p); } });
+    saveLocal(); closeSheet(); setSel(false); renderAll(); toast(`${n}곳을 "${b.dataset.c}"(으)로 옮겼어요`); };
+};
+$('#selDel').onclick = () => {
+  if(!S.selected.size){ toast('먼저 장소를 체크해 주세요'); return; }
+  const b = $('#selDel');
+  if(!b.dataset.armed){ b.dataset.armed = 1; b.textContent = `${S.selected.size}곳 삭제 확정`; setTimeout(() => { delete b.dataset.armed; b.textContent = '삭제'; }, 4000); return; }
+  const ids = [...S.selected]; ids.forEach(id => deletePlace(id)); delete b.dataset.armed; b.textContent = '삭제'; setSel(false); toast(`${ids.length}곳을 지웠어요`);
+};
 $('#q').addEventListener('input', e => { S.q = e.target.value; renderList(); });
 $('#sort').value = S.sort;
 $('#sort').addEventListener('change', e => { S.sort = e.target.value; lsSet('ms-sort', S.sort); renderList(); });
