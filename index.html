@@ -156,6 +156,9 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
 .vrow .vd{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .vrow .vn{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}
 .vrow button{border:0;background:transparent;color:var(--muted);padding:0 4px}
+.cdot{width:18px;height:18px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px var(--line);padding:0;flex:none;align-self:center}
+.cdot.big{width:30px;height:30px}
+.cdot.on{box-shadow:0 0 0 3px var(--ink)}
 .rate button{border:0;background:transparent;font-size:24px;padding:0 2px;color:var(--line)}
 .rate button.on{color:#E0A100}
 .go{position:sticky;bottom:0;background:var(--bg);padding-top:12px;margin-top:12px}
@@ -280,7 +283,21 @@ function shortDate(s){ if(!s) return ''; const [y,m,d]=s.split('-').map(Number);
 const DEFAULT_CATS = ['카페','음식점','관광지','마트','기타'];
 const CAT_COLORS = {'카페':'#B7791F','음식점':'#D1495B','관광지':'#2E86AB','마트':'#5E8C3A','기타':'#8E7DBE'};
 const EXTRA = ['#C2410C','#0F766E','#7C3AED','#BE185D','#4D7C0F','#1D4ED8','#A16207'];
-function catColor(c){ if(CAT_COLORS[c]) return CAT_COLORS[c]; let h=0; for(const ch of (c||'')) h=(h*31+ch.charCodeAt(0))>>>0; return EXTRA[h%EXTRA.length]; }
+const PALETTE = ['#B7791F','#D1495B','#2E86AB','#5E8C3A','#8E7DBE','#C2410C','#0F766E','#7C3AED','#BE185D','#1D4ED8','#A16207','#64748B'];
+/* 분류 목록(이름·색·순서) — 구글 시트 places에 id "__cats__" 줄 하나로 같이 저장됨 */
+const CATS_ID = '__cats__';
+let cats = DEFAULT_CATS.map(n => ({name:n, color:CAT_COLORS[n]}));
+function catColor(c){ const f = cats.find(x => x.name === c); if(f && f.color) return f.color; if(CAT_COLORS[c]) return CAT_COLORS[c]; let h=0; for(const ch of (c||'')) h=(h*31+ch.charCodeAt(0))>>>0; return EXTRA[h%EXTRA.length]; }
+function splitCats(arr){
+  const row = arr.find(p => p.id === CATS_ID);
+  if(row){ try{ const j = JSON.parse(row.memo); if(Array.isArray(j) && j.length) cats = j.map(x => ({name:String(x.name), color:String(x.color||'')})); }catch(e){} }
+  return arr.filter(p => p.id !== CATS_ID);
+}
+function saveCats(){
+  const t = nowIso();
+  const row = normP({id:CATS_ID, name:'(분류 설정)', category:'', memo:JSON.stringify(cats), createdAt:t, updatedAt:t});
+  saveLocal(); queue('upsertPlace', row); renderAll();
+}
 const KAKAO_GROUP = {CE7:'카페', FD6:'음식점', AT4:'관광지', MT1:'마트', CS2:'마트'};
 const NAVS = {tmap:'티맵', naver:'네이버 내비', kakaonavi:'카카오내비', kakaomap:'카카오맵'};
 
@@ -298,8 +315,8 @@ const normP = p => ({ id:String(p.id), name:String(p.name||''), category:String(
 const normV = v => ({ id:String(v.id), placeId:String(v.placeId), date:String(v.date||''), time:String(v.time||''),
   note:String(v.note||''), createdAt:String(v.createdAt||''), updatedAt:String(v.updatedAt||'') });
 
-function loadLocal(){ const d=lsGet('ms-data',{places:[],visits:[]}); places=(d.places||[]).map(normP); visits=(d.visits||[]).map(normV); outbox=lsGet('ms-outbox',[]); }
-function saveLocal(){ lsSet('ms-data',{places,visits}); lsSet('ms-outbox',outbox); }
+function loadLocal(){ const d=lsGet('ms-data',{places:[],visits:[]}); places=splitCats((d.places||[]).map(normP)); visits=(d.visits||[]).map(normV); outbox=lsGet('ms-outbox',[]); cats.forEach(c=>{ if(!c.color) c.color = catColor(c.name); }); }
+function saveLocal(){ lsSet('ms-data',{places:[...places, normP({id:CATS_ID, name:'(분류 설정)', memo:JSON.stringify(cats)})],visits}); lsSet('ms-outbox',outbox); }
 const placeById = id => places.find(p => p.id === id);
 
 /* ───────── 저장소(구글 시트) 동기화 ───────── */
@@ -327,7 +344,7 @@ async function pull(){
     setSync('불러오는 중…');
     const r = await fetch(CFG.SCRIPT_URL + '?token=' + encodeURIComponent(CFG.TOKEN));
     const d = await r.json(); if(d.error) throw new Error(d.error);
-    places = (d.places||[]).map(normP); visits = (d.visits||[]).map(normV);
+    places = splitCats((d.places||[]).map(normP)); visits = (d.visits||[]).map(normV);
     saveLocal(); renderAll(); setSync('동기화됨','ok');
   }catch(e){ setSync('저장소 연결 안 됨','warn'); }
 }
@@ -348,6 +365,7 @@ function saveVisit(v){
 }
 function deleteVisit(id){ visits = visits.filter(v => v.id !== id); saveLocal(); queue('deleteVisit', {id}); renderAll(); }
 function importMany(ps, vs){
+  ps = ps.filter(p => p.id !== CATS_ID);
   ps.forEach(p => { const i=places.findIndex(x=>x.id===p.id); if(i<0) places.push(p); else places[i]=p; });
   vs.forEach(v => { const i=visits.findIndex(x=>x.id===v.id); if(i<0) visits.push(v); else visits[i]=v; });
   saveLocal(); queue('importAll', {places:ps, visits:vs}); renderAll();
@@ -366,7 +384,7 @@ function stats(){
     if(v.date <= t){ s.n++; if(v.date > s.last) s.last = v.date; } else if(!s.next || v.date < s.next) s.next = v.date; }
   return m;
 }
-function allCats(){ const s = new Set(DEFAULT_CATS); places.forEach(p => p.category && s.add(p.category)); return [...s]; }
+function allCats(){ const s = new Set(cats.map(c => c.name)); places.forEach(p => p.category && s.add(p.category)); return [...s]; }
 function filtered(){
   const q = S.q.trim().toLowerCase();
   return places.filter(p => (S.cat === '전체' || p.category === S.cat) &&
@@ -767,6 +785,10 @@ function openSettings(){
     <div class="card"><h3>출발 버튼에 쓸 내비 (이 기기)</h3>
       <div class="chips" id="stNavi" style="flex-wrap:wrap;padding:0">${Object.keys(NAVS).map(k=>`<button class="chip ${k===def?'on':''}" data-n="${k}">${NAVS[k]}</button>`).join('')}</div>
     </div>
+    <div class="card"><h3>분류 관리 <button class="btn small" id="catAdd">＋ 분류 추가</button></h3>
+      <div id="catList"></div>
+      <p class="hint">분류를 지우면 그 분류의 장소들은 "기타"로 옮겨져요.</p>
+    </div>
     <div class="card"><h3>여러 곳 한꺼번에 추가</h3>
       <p class="hint" style="margin-top:0">내비 즐겨찾기에 있는 이름을 한 줄에 하나씩 붙여넣으세요. 하나씩 검색해서 위치를 찾아 드려요.</p>
       <div class="field" style="margin-top:6px"><textarea id="bulkText" placeholder="스타벅스 광화문점&#10;경복궁&#10;이마트 성수점"></textarea></div>
@@ -784,6 +806,54 @@ function openSettings(){
     <div class="actions"><button class="btn" data-close>닫기</button></div>`);
   const body = $('#sheetBody');
   const sy = body.querySelector('#stSync'); if(sy) sy.onclick = async () => { await pull(); toast('불러왔어요'); openSettings(); };
+  /* 분류 관리 */
+  const drawCats = () => {
+    const counts = {}; places.forEach(p => counts[p.category] = (counts[p.category]||0) + 1);
+    body.querySelector('#catList').innerHTML = cats.map((c, i) => `<div class="vrow" data-ci="${i}">
+      <button class="cdot" data-color style="background:${c.color}" aria-label="색 바꾸기"></button>
+      <span class="vn" style="font-weight:700;align-self:center">${esc(c.name)} <small style="color:var(--muted);font-weight:400">${counts[c.name]||0}곳</small></span>
+      <button data-up aria-label="위로" ${i===0?'disabled':''}>↑</button><button data-down aria-label="아래로" ${i===cats.length-1?'disabled':''}>↓</button>
+      <button data-ren aria-label="이름 바꾸기">✎</button><button data-del aria-label="지우기">✕</button></div>`).join('');
+  };
+  drawCats();
+  const renameCat = (i) => {
+    const old = cats[i].name;
+    openSheet(`<div class="sh-title"><h2>분류 이름 바꾸기</h2></div>
+      <div class="field"><label for="cnName">이름</label><input id="cnName" value="${esc(old)}"></div>
+      <div class="field"><label>색</label><div class="chips" id="cnColors" style="flex-wrap:wrap;padding:0">${PALETTE.map(h=>`<button type="button" class="cdot big ${h===cats[i].color?'on':''}" data-h="${h}" style="background:${h}"></button>`).join('')}</div></div>
+      <div class="actions"><button class="btn" id="cnCancel">취소</button><button class="btn primary" id="cnSave">저장</button></div>`);
+    const b2 = $('#sheetBody'); let color = cats[i].color;
+    b2.querySelector('#cnColors').onclick = e => { const b = e.target.closest('[data-h]'); if(!b) return; color = b.dataset.h; b2.querySelectorAll('.cdot').forEach(x => x.classList.toggle('on', x === b)); };
+    b2.querySelector('#cnCancel').onclick = openSettings;
+    b2.querySelector('#cnSave').onclick = () => {
+      const nn = b2.querySelector('#cnName').value.trim(); if(!nn){ toast('이름을 넣어 주세요'); return; }
+      if(nn !== old && cats.some((c, j) => j !== i && c.name === nn)){ toast('같은 이름의 분류가 이미 있어요'); return; }
+      cats[i] = {name:nn, color};
+      if(nn !== old) places.forEach(p => { if(p.category === old){ p.category = nn; queue('upsertPlace', p); } });
+      saveCats(); openSettings(); toast('바꿨어요');
+    };
+  };
+  body.querySelector('#catAdd').onclick = () => {
+    const used = new Set(cats.map(c => c.color));
+    cats.push({name:'새 분류', color: PALETTE.find(h => !used.has(h)) || PALETTE[cats.length % PALETTE.length]});
+    renameCat(cats.length - 1);
+  };
+  body.querySelector('#catList').onclick = e => {
+    const row = e.target.closest('[data-ci]'); if(!row) return; const i = Number(row.dataset.ci);
+    if(e.target.closest('[data-up]')){ [cats[i-1], cats[i]] = [cats[i], cats[i-1]]; saveCats(); drawCats(); }
+    else if(e.target.closest('[data-down]')){ [cats[i+1], cats[i]] = [cats[i], cats[i+1]]; saveCats(); drawCats(); }
+    else if(e.target.closest('[data-ren]') || e.target.closest('[data-color]')) renameCat(i);
+    else if(e.target.closest('[data-del]')){
+      const btn = e.target.closest('[data-del]');
+      if(!btn.dataset.armed){ btn.dataset.armed = 1; btn.textContent = '한 번 더'; return; }
+      const name = cats[i].name;
+      if(cats.length <= 1){ toast('분류는 하나 이상 있어야 해요'); return; }
+      cats.splice(i, 1);
+      const fallback = cats.find(c => c.name === '기타') ? '기타' : cats[0].name;
+      places.forEach(p => { if(p.category === name){ p.category = fallback; queue('upsertPlace', p); } });
+      saveCats(); drawCats(); toast(`"${name}" 분류를 지웠어요`);
+    }
+  };
   body.querySelector('#stNavi').onclick = e => { const b = e.target.closest('[data-n]'); if(!b) return; lsSet('ms-navi', b.dataset.n);
     body.querySelectorAll('#stNavi .chip').forEach(x => x.classList.toggle('on', x === b)); toast(`출발 버튼: ${NAVS[b.dataset.n]}`); };
   let bulk = [];
