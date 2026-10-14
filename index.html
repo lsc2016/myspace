@@ -834,6 +834,10 @@ function openSettings(){
       <div class="field" style="margin-top:6px"><textarea id="bulkText" placeholder="스타벅스 광화문점&#10;경복궁&#10;이마트 성수점"></textarea></div>
       <button class="btn small primary" id="bulkGo" style="margin-top:8px">찾기</button>
       <ul id="bulkRes" class="results bulk" hidden></ul>
+      <div id="bulkCatBox" hidden>
+        <p class="hint" style="margin:10px 0 4px">체크한 곳을 어느 분류에 넣을까요?</p>
+        <div class="chips" id="bulkCats" style="flex-wrap:wrap;padding:0"><button type="button" class="chip on" data-c="">자동 (카카오 분류대로)</button>${allCats().map(c=>`<button type="button" class="chip" data-c="${esc(c)}"><i style="background:${catColor(c)}"></i>${esc(c)}</button>`).join('')}</div>
+      </div>
       <button class="btn small primary" id="bulkAdd" style="margin-top:8px" hidden></button>
     </div>
     <div class="card"><h3>백업</h3>
@@ -907,11 +911,15 @@ function openSettings(){
       ? `<li><input type="checkbox" checked data-b="${i}" id="bk${i}"><label for="bk${i}">${esc(b.d.place_name)}<small>${esc(b.d.road_address_name||b.d.address_name)} · ${esc(KAKAO_GROUP[b.d.category_group_code]||'기타')} · 입력: ${esc(b.line)}</small></label></li>`
       : `<li style="color:var(--muted)">못 찾음: ${esc(b.line)}</li>`).join('');
     const add = body.querySelector('#bulkAdd'); add.hidden = false; add.textContent = `체크한 곳 추가`;
+    body.querySelector('#bulkCatBox').hidden = false;
   };
+  let bulkCat = '';
+  body.querySelector('#bulkCats').onclick = e => { const b = e.target.closest('[data-c]'); if(!b) return; bulkCat = b.dataset.c;
+    body.querySelectorAll('#bulkCats .chip').forEach(x => x.classList.toggle('on', x === b)); };
   body.querySelector('#bulkAdd').onclick = () => {
     const ps = []; const t = nowIso();
     body.querySelectorAll('#bulkRes input[data-b]:checked').forEach(cb => { const d = bulk[cb.dataset.b].d;
-      ps.push(normP({id:uid(), name:d.place_name, category:KAKAO_GROUP[d.category_group_code]||'기타', address:d.road_address_name||d.address_name,
+      ps.push(normP({id:uid(), name:d.place_name, category:bulkCat || KAKAO_GROUP[d.category_group_code] || '기타', address:d.road_address_name||d.address_name,
         lat:d.y, lng:d.x, phone:d.phone, url:d.place_url, memo:'', rating:0, createdAt:t, updatedAt:t})); });
     if(!ps.length) return;
     importMany(ps, []); closeSheet(); toast(`${ps.length}곳 추가했어요`);
