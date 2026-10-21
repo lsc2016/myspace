@@ -300,18 +300,28 @@ const WD = ['일','월','화','수','목','금','토'];
 function prettyDate(s){ if(!s) return ''; const [y,m,d]=s.split('-').map(Number); const w=WD[new Date(y,m-1,d).getDay()]; return `${y}. ${m}. ${d}. (${w})`; }
 function shortDate(s){ if(!s) return ''; const [y,m,d]=s.split('-').map(Number); return (y===new Date().getFullYear()?'':y+'. ')+`${m}. ${d}.`; }
 
-const DEFAULT_CATS = ['카페','음식점','관광지','마트','기타'];
-const CAT_COLORS = {'카페':'#B7791F','음식점':'#D1495B','관광지':'#2E86AB','마트':'#5E8C3A','기타':'#8E7DBE'};
+const DEFAULT_CATS = ['집','카페','음식점','관광지','마트','기타'];
+const CAT_COLORS = {'집':'#0F766E','카페':'#B7791F','음식점':'#D1495B','관광지':'#2E86AB','마트':'#5E8C3A','기타':'#8E7DBE'};
 const EXTRA = ['#C2410C','#0F766E','#7C3AED','#BE185D','#4D7C0F','#1D4ED8','#A16207'];
 const PALETTE = ['#B7791F','#D1495B','#2E86AB','#5E8C3A','#8E7DBE','#C2410C','#0F766E','#7C3AED','#BE185D','#1D4ED8','#A16207','#64748B'];
 /* 분류 목록(이름·색·순서) — 구글 시트 places에 id "__cats__" 줄 하나로 같이 저장됨 */
 const CATS_ID = '__cats__';
 let cats = DEFAULT_CATS.map(n => ({name:n, color:CAT_COLORS[n]}));
 function catColor(c){ const f = cats.find(x => x.name === c); if(f && f.color) return f.color; if(CAT_COLORS[c]) return CAT_COLORS[c]; let h=0; for(const ch of (c||'')) h=(h*31+ch.charCodeAt(0))>>>0; return EXTRA[h%EXTRA.length]; }
+let catsSaved = false;   // 저장된 분류 목록을 불러왔는지
 function splitCats(arr){
-  const row = arr.find(p => p.id === CATS_ID);
-  if(row){ try{ const j = JSON.parse(row.memo); if(Array.isArray(j) && j.length) cats = j.map(x => ({name:String(x.name), color:String(x.color||'')})); }catch(e){} }
+  const row = arr.find(p => p.id === CATS_ID); catsSaved = false;
+  if(row){ try{ const j = JSON.parse(row.memo); if(Array.isArray(j) && j.length){ cats = j.map(x => ({name:String(x.name), color:String(x.color||'')})); catsSaved = true; } }catch(e){} }
   return arr.filter(p => p.id !== CATS_ID);
+}
+/* "집"이 기본 분류 첫째로 추가되기 전에 저장된 목록에도 한 번만 "집"을 맨 앞에 넣어 줌 (이후 사용자가 옮기거나 지우면 그대로 둠) */
+function homeFirst(){
+  if(!catsSaved || lsGet('ms-home-first', false)) return;
+  lsSet('ms-home-first', true);
+  if(cats[0] && cats[0].name === '집') return;
+  const old = cats.find(c => c.name === '집');
+  cats = [old || {name:'집', color:CAT_COLORS['집']}, ...cats.filter(c => c.name !== '집')];
+  saveCats();
 }
 function saveCats(){
   const t = nowIso();
@@ -364,7 +374,7 @@ async function pull(){
     setSync('불러오는 중…');
     const r = await fetch(CFG.SCRIPT_URL + '?token=' + encodeURIComponent(CFG.TOKEN));
     const d = await r.json(); if(d.error) throw new Error(d.error);
-    places = splitCats((d.places||[]).map(normP)); visits = (d.visits||[]).map(normV);
+    places = splitCats((d.places||[]).map(normP)); visits = (d.visits||[]).map(normV); homeFirst();
     saveLocal(); renderAll(); setSync('동기화됨','ok');
   }catch(e){ setSync('저장소 연결 안 됨','warn'); }
 }
@@ -952,7 +962,7 @@ function toMarkdown(){
 $('#btnSettings').onclick = openSettings;
 
 /* ───────── 시작 ───────── */
-loadLocal(); renderAll(); applyLayout();
+loadLocal(); homeFirst(); renderAll(); applyLayout();
 setSync(online() ? '' : '이 기기에만 저장', online() ? '' : 'warn');
 pull(); initKakao();
 document.addEventListener('visibilitychange', () => { if(!document.hidden && $('#sheet').hidden) pull(); });
