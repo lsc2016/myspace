@@ -260,6 +260,7 @@ body.wide .toast{left:200px}
       <div id="pickBar" class="pickbar" hidden></div>
     </section>
     <section id="view-date" class="view" hidden>
+      <div id="tripFilters" class="chips"></div>
       <div class="listhead"><span id="tripCount"></span></div>
       <ul id="tripList" class="tlist"></ul>
     </section>
@@ -358,7 +359,7 @@ function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e)
 /* ───────── 데이터 ───────── */
 let places = [], visits = [], outbox = [];
 /* route: 지도에 경로로 그릴 묶음 {key} (여행 id 또는 "d:날짜"), trip: 열려 있는 여행 상세의 key */
-const S = { tab:'list', cat:'전체', q:'', sort: lsGet('ms-sort','recent'), route:null, trip:null, fit:true, extResults:[], extLoading:false };
+const S = { tab:'list', cat:'전체', tripFilter:'전체', q:'', sort: lsGet('ms-sort','recent'), route:null, trip:null, fit:true, extResults:[], extLoading:false };
 
 const numOrNull = v => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
 const normP = p => ({ id:String(p.id), name:String(p.name||''), category:String(p.category||''), address:String(p.address||''),
@@ -641,7 +642,25 @@ function openExtPlace(d){
   }
 
   body.querySelectorAll('[data-go]').forEach(b => {
-    b.onclick = () => go(targetPlace, b.dataset.go);
+    b.onclick = () => {
+      let p = existing;
+      if(!p){
+        p = normP({
+          id: uid(),
+          name: d.place_name,
+          category: cat,
+          address: addr,
+          lat: targetPlace.lat,
+          lng: targetPlace.lng,
+          phone: targetPlace.phone,
+          url: targetPlace.url,
+          memo: '',
+          rating: 0
+        });
+        savePlace(p);
+      }
+      go(p, b.dataset.go);
+    };
   });
 }
 
@@ -758,12 +777,32 @@ function openPlace(id){
 
 /* ───────── 내비로 출발 ───────── */
 const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function recordNaviVisit(placeId){
+  const t = today();
+  const d = new Date();
+  const tm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+  const existing = visits.find(v => v.placeId === placeId && v.date === t);
+  if(existing){
+    existing.time = tm;
+    saveVisit(existing);
+  } else {
+    saveVisit({ id: uid(), placeId, date: t, time: tm, note: '' });
+  }
+  toast('내비 출발 장소를 오늘 방문 기록에 등록했어요');
+  if(placeById(placeId)) openPlace(placeId);
+}
 async function go(p, app){
   if(p.lat == null && p.address){
     const c = await addrToCoord(p.address);
     if(c){ p.lat = c.lat; p.lng = c.lng; if(p.id) savePlace({...p}); }
   }
   if(p.lat == null){ toast('위치 정보가 없는 장소예요. "정보 고치기"에서 다시 검색해 주세요.'); return; }
+  if(!p.id){
+    p.id = uid();
+    if(!p.createdAt) p.createdAt = nowIso();
+    savePlace(p);
+  }
+  recordNaviVisit(p.id);
   const n = encodeURIComponent(p.name);
   if(!isMobile()){ window.open(`https://map.kakao.com/link/to/${n},${p.lat},${p.lng}`, '_blank'); return; }
   if(app === 'kakaonavi'){
@@ -904,10 +943,35 @@ function rangeParts(a, b){
 const fmtRange = (a, b) => { const r = rangeParts(a, b); return (r.year ? r.year + ' ' : '') + r.text; };
 
 function renderTrips(){
-  const gs = tripGroups();
-  $('#tripCount').textContent = gs.length ? `여행·날짜 묶음 ${gs.length}개` : '';
+  const allGs = tripGroups();
+  const tripCount = allGs.filter(g => g.trip).length;
+  const dateCount = allGs.filter(g => !g.trip).length;
+
+  const curFilter = S.tripFilter || '전체';
+  const filterDefs = [
+    { key: '전체', label: '전체', count: allGs.length },
+    { key: '여행별', label: '여행별', count: tripCount },
+    { key: '날짜별', label: '날짜별', count: dateCount }
+  ];
+  const filterEl = $('#tripFilters');
+  if(filterEl){
+    filterEl.innerHTML = filterDefs.map(f =>
+      `<button class="chip ${curFilter === f.key ? 'on' : ''}" data-trip-filter="${f.key}">${f.label} <small>${f.count}</small></button>`
+    ).join('');
+  }
+
+  let gs = allGs;
+  if(curFilter === '여행별') gs = allGs.filter(g => g.trip);
+  else if(curFilter === '날짜별') gs = allGs.filter(g => !g.trip);
+
+  const countLabel = curFilter === '여행별' ? '여행 묶음' : (curFilter === '날짜별' ? '날짜 묶음' : '여행·날짜 묶음');
+  $('#tripCount').textContent = gs.length ? `${countLabel} ${gs.length}개` : '';
+
   if(!gs.length){
-    $('#tripList').innerHTML = `<li class="empty"><strong>아직 여행이나 날짜 기록이 없어요</strong>아래 <b>＋ 여행 추가</b>로 이름과 기간을 정하고<br>그 여행에 갈(다녀온) 장소를 넣어 보세요.</li>`;
+    let emptyMsg = `<strong>아직 여행이나 날짜 기록이 없어요</strong>아래 <b>＋ 여행 추가</b>로 이름과 기간을 정하고<br>그 여행에 갈(다녀온) 장소를 넣어 보세요.`;
+    if(curFilter === '여행별') emptyMsg = `<strong>등록된 여행 묶음이 없어요</strong>아래 <b>＋ 여행 추가</b>를 눌러 여행을 만들어 보세요.`;
+    else if(curFilter === '날짜별') emptyMsg = `<strong>날짜별 일상 기록이 없어요</strong>장소에서 내비로 출발하거나 날짜를 추가해 보세요.`;
+    $('#tripList').innerHTML = `<li class="empty">${emptyMsg}</li>`;
     return;
   }
   $('#tripList').innerHTML = gs.map(g => { const r = rangeParts(g.start, g.end); const names = g.vs.map(placeName);
@@ -915,6 +979,15 @@ function renderTrips(){
       <div class="body"><div class="tn">${esc(groupTitle(g))}</div>
       <div class="tp">${names.length ? esc(names.slice(0,3).join(' · ')) + (names.length > 3 ? ' …' : '') : '아직 넣은 장소가 없어요'}</div>
       ${names.length ? `<div class="tc">${names.length}곳</div>` : ''}</div></li>`; }).join('');
+}
+const tripFiltersEl = $('#tripFilters');
+if(tripFiltersEl){
+  tripFiltersEl.addEventListener('click', e => {
+    const b = e.target.closest('[data-trip-filter]');
+    if(!b) return;
+    S.tripFilter = b.dataset.tripFilter;
+    renderTrips();
+  });
 }
 $('#tripList').addEventListener('click', e => { const li = e.target.closest('[data-key]'); if(li) openTrip(li.dataset.key); });
 
