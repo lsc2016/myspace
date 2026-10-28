@@ -113,6 +113,25 @@ main{flex:1;min-height:0;position:relative}
 .npin .lbl{position:absolute;top:28px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:12px;
   color:#18221F;background:rgba(255,255,255,.92);padding:1px 6px;border-radius:6px}
 
+/* 지도 현재 위치 버튼 및 내 위치 마커 */
+.myloc-btn{position:absolute;z-index:7;right:16px;bottom:calc(84px + env(safe-area-inset-bottom,0px));
+  width:44px;height:44px;border-radius:50%;background:var(--surface);color:var(--ink);
+  border:1px solid var(--line);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;padding:0;transition:transform .15s ease,background-color .15s ease}
+.myloc-btn:active{transform:scale(.92);background:var(--soft)}
+.myloc-btn.loading{cursor:wait;pointer-events:none;opacity:.8}
+.myloc-btn.loading svg{animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+.my-pos-marker{position:relative;width:24px;height:24px;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.my-pos-marker .pulse{position:absolute;width:100%;height:100%;border-radius:50%;background:rgba(37,99,235,.28);animation:pulse-anim 2s infinite ease-out}
+.my-pos-marker .dot{width:14px;height:14px;border-radius:50%;background:#2563EB;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);position:relative;z-index:2}
+@keyframes pulse-anim{
+  0%{transform:scale(.7);opacity:.9}
+  70%{transform:scale(2.2);opacity:0}
+  100%{transform:scale(2.2);opacity:0}
+}
+
 /* 날짜 화면: 여행 묶음 목록 (왼쪽 기간 · 오른쪽 장소 묶음) */
 .tlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .titem{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);
@@ -212,6 +231,7 @@ body.wide #view-map{position:fixed;left:400px;top:0;right:0;bottom:0;border-left
 body.wide #view-map[hidden]{display:block!important}
 body.wide #mapCats{display:none}
 body.wide .pickbar{bottom:16px;max-width:520px}
+body.wide .myloc-btn{right:20px;bottom:calc(24px + env(safe-area-inset-bottom,0px))}
 body.wide .fab{right:auto;left:384px;transform:translateX(-100%)}
 body.wide .sheet{justify-content:flex-start}
 body.wide .sheet-body{max-width:420px;height:100%;max-height:100%;border-radius:0}
@@ -258,6 +278,16 @@ body.wide .toast{left:200px}
       <div id="routeBanner" class="banner" hidden></div>
       <div id="mapMsg" class="mapmsg" hidden></div>
       <div id="pickBar" class="pickbar" hidden></div>
+      <button id="btnMyLocation" class="map-btn myloc-btn" type="button" aria-label="현재 위치로 이동" title="현재 위치">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="7"/>
+          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+          <line x1="12" y1="2" x2="12" y2="5"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+          <line x1="2" y1="12" x2="5" y2="12"/>
+          <line x1="19" y1="12" x2="22" y2="12"/>
+        </svg>
+      </button>
     </section>
     <section id="view-date" class="view" hidden>
       <div id="tripFilters" class="chips"></div>
@@ -1079,6 +1109,7 @@ function openPlacePicker(key){
 
 /* ───────── 지도 (카카오) ───────── */
 let map = null, svcPlaces = null, geocoder = null, overlays = [], routeLine = null, tempOverlay = null, pickLatLng = null;
+let myLocationOverlay = null, isLocating = false;
 function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
 async function initKakao(){
   if(!CFG.KAKAO_JS_KEY){ mapMsg('카카오 지도 키가 아직 없어요.<br>config.js에 JavaScript 키를 넣으면 지도가 나옵니다.'); return; }
@@ -1170,6 +1201,71 @@ function onMapClick(latlng){
   $('#pickYes').onclick = () => openEditor(null, {prefill: {lat: latlng.getLat(), lng: latlng.getLng(), address: addr}});
 }
 function clearPick(){ $('#pickBar').hidden = true; if(tempOverlay){ tempOverlay.setMap(null); tempOverlay = null; } }
+
+function moveToMyLocation(){
+  if(isLocating) return;
+  if(!navigator.geolocation){
+    toast('이 기기에서는 위치 정보를 지원하지 않아요.');
+    return;
+  }
+  if(!map){
+    toast('지도가 아직 준비되지 않았어요.');
+    return;
+  }
+  const btn = $('#btnMyLocation');
+  isLocating = true;
+  if(btn) btn.classList.add('loading');
+  toast('현재 위치를 찾는 중…');
+
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      isLocating = false;
+      if(btn) btn.classList.remove('loading');
+      showMyLocation(pos.coords.latitude, pos.coords.longitude);
+    },
+    err => {
+      isLocating = false;
+      if(btn) btn.classList.remove('loading');
+      let msg = '현재 위치를 가져오지 못했어요.';
+      if(err.code === 1){
+        msg = '위치 권한이 꺼져 있어 현재 위치를 찾을 수 없어요. 브라우저 설정에서 위치 권한을 켜 주세요.';
+      } else if(err.code === 2){
+        msg = '위치 정보를 가져올 수 없어요. GPS 상태를 확인해 주세요.';
+      } else if(err.code === 3){
+        msg = '위치 정보를 가져오는 데 시간이 초과되었어요. 다시 시도해 주세요.';
+      }
+      toast(msg);
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  );
+}
+
+function showMyLocation(lat, lng){
+  if(!map) return;
+  const latlng = new kakao.maps.LatLng(lat, lng);
+  if(myLocationOverlay){
+    myLocationOverlay.setMap(null);
+    myLocationOverlay = null;
+  }
+  const el = document.createElement('div');
+  el.className = 'my-pos-marker';
+  el.innerHTML = '<div class="pulse"></div><div class="dot"></div>';
+  myLocationOverlay = new kakao.maps.CustomOverlay({
+    map: map,
+    position: latlng,
+    yAnchor: 0.5,
+    xAnchor: 0.5,
+    zIndex: 10,
+    content: el
+  });
+  S.fit = false;
+  map.setLevel(4);
+  map.panTo(latlng);
+  toast('현재 위치로 이동했습니다.');
+}
+
+const myLocBtn = $('#btnMyLocation');
+if(myLocBtn) myLocBtn.onclick = moveToMyLocation;
 
 /* ───────── 탭 ───────── */
 const wideMQ = window.matchMedia('(min-width: 900px)');
