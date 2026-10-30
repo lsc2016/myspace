@@ -541,23 +541,36 @@ function fmtDistance(m){
   return m < 1000 ? `${m}m` : `${(m / 1000).toFixed(1)}km`;
 }
 
-function generateReason(cat, placeName, distM, subCat, condText){
-  const dStr = fmtDistance(distM);
-  if(cat.includes('카페')){
-    const sub = subCat || '카페';
-    return `현재 위치에서 ${dStr} 거리로 가깝고, 편안한 분위기에서 휴식과 대화를 즐기기 좋은 ${sub}예요.`;
-  } else if(cat.includes('음식점') || cat.includes('식당')){
-    const sub = subCat || '식당';
-    return `현재 위치에서 ${dStr} 거리에 있어 접근이 편리하고, 정갈하고 든든한 식사를 즐길 수 있는 맛집이에요.`;
-  } else if(cat.includes('미용실') || cat.includes('헤어')){
-    return `현재 위치에서 ${dStr} 거리로 방문하기 편리하며, 친절하고 꼼꼼한 1:1 맞춤 헤어 케어를 기대할 수 있는 곳이에요.`;
-  } else if(cat.includes('관광지')){
-    return `현재 위치에서 ${dStr} 거리의 쾌적한 쉼터로, 산책과 기분 전환 나들이를 즐기기 좋은 명소예요.`;
-  } else if(cat.includes('마트')){
-    return `현재 위치에서 ${dStr} 거리에 위치하여 신선 식품과 생필품을 알차게 장보기 좋은 매장이에요.`;
-  } else {
-    return `현재 위치 기준 ${dStr} 거리에 있어 접근성이 우수하고 기준 조건에 가장 잘 부합하는 곳이에요.`;
+/* 내 기록에서 추천: 별점·방문 기록·거리로 내 장소 중 3곳을 고른다 */
+function daysAgo(d){ if(!d) return null; const [y,m,dd]=d.split('-').map(Number); return Math.round((Date.now() - new Date(y,m-1,dd)) / 86400000); }
+function agoText(n){ return n < 30 ? `${n}일 전` : n < 365 ? `${Math.round(n/30)}달 전` : `${Math.round(n/365)}년 전`; }
+function myPicks(arr){
+  const st = stats(), me = S.myCoords, out = [];
+  for(const p of arr){
+    const s = st[p.id] || {};
+    if(s.next || p.category === '집') continue;            // 갈 예정인 곳과 집은 빼기
+    const dist = (me && p.lat != null) ? calcDistance(me.lat, me.lng, p.lat, p.lng) : null;
+    const near = dist != null && dist <= 2000;
+    const ago = daysAgo(s.last);
+    let score = 0, why = [];
+    if(p.rating >= 4 && s.n && ago >= 60){ score += 40 + p.rating * 4 + Math.min(ago, 365) / 30; why.push(`${starText(p.rating)} 준 곳인데 ${agoText(ago)}에 마지막으로 갔어요`); }
+    else if(!s.n){ score += 25 + p.rating * 3; why.push(p.rating ? `${starText(p.rating)} · 저장만 하고 아직 안 가봤어요` : '저장만 하고 아직 안 가봤어요'); }
+    if(near && !(ago != null && ago < 14)){ score += 30 * (1 - dist / 2000) + 5; why.push(`여기서 ${fmtDistance(dist)}`); }
+    if(!score) continue;
+    out.push({ p, score, why: why.join(' · ') });
   }
+  return out.sort((a, b) => b.score - a.score).slice(0, 3);
+}
+
+/* 카카오 업종 코드 (글자 검색보다 정확) */
+const CAT_GROUP = {카페:'CE7', 음식점:'FD6', 관광지:'AT4', 마트:'MT1', 숙소:'AD5'};
+
+/* 사실만 담은 추천 이유: 거리 · 세부 종류 · 내가 좋아한 곳과 같은 종류인지 */
+function factReason(dist, subCat, liked){
+  const bits = [`여기서 ${fmtDistance(dist)}`];
+  if(subCat) bits.push(subCat);
+  if(liked) bits.push(`내가 ${starText(liked.rating)} 준 '${liked.name}'과 같은 ${subCat}`);
+  return bits.join(' · ');
 }
 
 function filterAndRankRecommendations(category, candidates, userLat, userLng, criteriaText, savedPlaces){
@@ -566,11 +579,13 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
   const crit = criteriaMap[category] || { category, condition: '반경 2km 이내, 만족도가 높은 곳', radius: 2000 };
   const maxRadius = crit.radius;
   const scored = [];
+  /* 같은 분류에서 내가 ★4 이상 준 곳 — 이름에 세부 종류(국밥, 베이커리…)가 들어가면 비슷한 곳으로 본다 */
+  const liked = (savedPlaces || []).filter(p => p.category === category && p.rating >= 4);
 
-  for(const c of candidates){
+  candidates.forEach((c, rank) => {
     const cLat = Number(c.y || c.lat);
     const cLng = Number(c.x || c.lng);
-    if(isNaN(cLat) || isNaN(cLng)) continue;
+    if(isNaN(cLat) || isNaN(cLng)) return;
 
     let dist;
     if(c.distance != null && String(c.distance).trim() !== '' && !isNaN(Number(c.distance))){
@@ -579,10 +594,10 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
       dist = calcDistance(userLat, userLng, cLat, cLng);
     }
 
-    if(dist > maxRadius * 1.2) continue;
+    if(dist > maxRadius * 1.2) return;
 
     const distScore = Math.max(0, (1 - (dist / maxRadius)) * 50);
-    let kwScore = 30;
+    let kwScore = 30 - rank;                               // 카카오 정확도 순위가 높을수록 가산
     const pname = c.place_name || c.name || '';
     const catName = c.category_name || '';
     const combined = `${pname} ${catName}`.toLowerCase();
@@ -591,7 +606,9 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
     else if(category === '카페' && /카페|커피|디저트|베이커리|로스터/.test(combined)) kwScore += 15;
     else if(category === '음식점' && /음식|식당|맛집|한식|일식|양식|중식/.test(combined)) kwScore += 15;
 
-    const totalScore = distScore + kwScore;
+    const subCat = catName.includes('>') ? catName.split('>').pop().trim() : '';
+    const like = subCat ? liked.find(p => p.name.includes(subCat)) : null;
+    const totalScore = distScore + kwScore + (like ? 25 : 0);
 
     const addr = c.road_address_name || c.address_name || c.address || '';
     let isSaved = false;
@@ -607,9 +624,9 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
       }
     }
 
+    if(isSaved) return;                                    // 이미 내 장소면 위 목록에 있으니 빼고 새 곳만
     const priceInfo = c.price || c.price_info || null;
-    const subCat = catName.includes('>') ? catName.split('>').pop().trim() : '';
-    const reason = generateReason(category, pname, dist, subCat, crit.condition);
+    const reason = factReason(dist, subCat, like);
 
     scored.push({
       name: pname,
@@ -627,7 +644,7 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
       savedId,
       score: totalScore
     });
-  }
+  });
 
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, 3);
@@ -635,7 +652,7 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
 
 let recSeq = 0;
 async function fetchRecommendations(cat){
-  if(!cat || cat === '전체'){
+  if(!cat || cat === '전체' || cat === '집'){
     S.recResults = []; S.recCat = null; S.recLoading = false; S.recError = null;
     renderList();
     return;
@@ -688,7 +705,10 @@ async function fetchRecommendations(cat){
 
   if(restKey){
     try {
-      const apiUrl = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(cat)}&x=${lng}&y=${lat}&radius=${radius}&size=15&sort=accuracy`;
+      const code = CAT_GROUP[cat];
+      const apiUrl = code
+        ? `https://dapi.kakao.com/v2/local/search/category.json?category_group_code=${code}&x=${lng}&y=${lat}&radius=${radius}&size=15&sort=accuracy`
+        : `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(cat)}&x=${lng}&y=${lat}&radius=${radius}&size=15&sort=accuracy`;
       const res = await fetch(apiUrl, { headers: { Authorization: `KakaoAK ${restKey}` } });
       if(res.ok){
         const data = await res.json();
@@ -735,9 +755,9 @@ function searchViaSdk(cat, lat, lng, radius){
       size: 15,
       sort: kakao.maps.services.SortBy.ACCURACY
     };
-    svcPlaces.keywordSearch(cat, (data, status) => {
-      res(status === kakao.maps.services.Status.OK && Array.isArray(data) ? data : []);
-    }, opt);
+    const done = (data, status) => res(status === kakao.maps.services.Status.OK && Array.isArray(data) ? data : []);
+    if(CAT_GROUP[cat]) svcPlaces.categorySearch(CAT_GROUP[cat], done, opt);
+    else svcPlaces.keywordSearch(cat, done, opt);
   });
 }
 
@@ -752,7 +772,7 @@ function addRecToMyPlaces(r){
     lng: r.lng,
     phone: r.phone || '',
     url: r.url || '',
-    memo: `[agy 추천] ${r.reason}`,
+    memo: `[추천] ${r.reason}`,
     rating: 0
   });
   savePlace(newPlace);
@@ -787,6 +807,22 @@ function onCatClick(e){
 $('#cats').addEventListener('click', onCatClick); $('#mapCats').addEventListener('click', onCatClick);
 
 /* ───────── 장소 목록 ───────── */
+function placeLi(p, s){
+  return `<li class="pitem" data-id="${esc(p.id)}"><span class="dot" style="background:${catColor(p.category)}"></span><div class="body">
+    <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.address || '주소 없음')}</div>
+    <div class="meta">${p.rating?`<span class="stars">${starText(p.rating)}</span>`:''}${s.n?`<span>${s.n}번 다녀옴 · 마지막 ${shortDate(s.last)}</span>`:''}${s.next?`<b>예정 ${shortDate(s.next)}</b>`:''}${p.lat==null?'<span>위치 없음</span>':''}</div>
+  </div></li>`;
+}
+/* 목록이 길 때(4곳 이상)만 맨 위에 "내 기록에서 추천" 3곳 */
+function myPicksHtml(arr){
+  if(arr.length < 4) return '';
+  const picks = myPicks(arr); if(!picks.length) return '';
+  return `<li class="psection"><span>내 기록에서 추천</span><small>${picks.length}</small></li>` +
+    picks.map(({p, why}) => `<li class="pitem mypick" data-id="${esc(p.id)}"><span class="dot" style="background:${catColor(p.category)}"></span><div class="body">
+      <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.address || '주소 없음')}</div>
+      <div class="rec-reason">${esc(why)}</div></div></li>`).join('') +
+    `<li class="psection"><span>${S.cat === '전체' ? '모든 장소' : esc(S.cat)}</span><small>${arr.length}</small></li>`;
+}
 function renderList(){
   const st = stats(); let arr = filtered();
   const by = { recent:(a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''),
@@ -803,7 +839,7 @@ function renderList(){
     $('#count').textContent = parts.join(' · ');
   } else {
     if(S.cat !== '전체' && S.recResults.length){
-      $('#count').textContent = `내 장소 ${arr.length}곳 · 추천 ${S.recResults.length}곳`;
+      $('#count').textContent = `내 장소 ${arr.length}곳 · 근처 새 장소 ${S.recResults.length}곳`;
     } else {
       $('#count').textContent = `${arr.length}곳`;
     }
@@ -829,43 +865,37 @@ function renderList(){
   if(!isSearching){
     if(S.cat === '전체'){
       if(!arr.length){ $('#list').innerHTML = `<li class="empty">조건에 맞는 장소가 없어요.</li>`; return; }
-      $('#list').innerHTML = arr.map(p => { const s = st[p.id] || {};
-        return `<li class="pitem" data-id="${esc(p.id)}"><span class="dot" style="background:${catColor(p.category)}"></span><div class="body">
-          <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.address || '주소 없음')}</div>
-          <div class="meta">${p.rating?`<span class="stars">${starText(p.rating)}</span>`:''}${s.n?`<span>${s.n}번 다녀옴 · 마지막 ${shortDate(s.last)}</span>`:''}${s.next?`<b>예정 ${shortDate(s.next)}</b>`:''}${p.lat==null?'<span>위치 없음</span>':''}</div>
-        </div></li>`; }).join('');
+      $('#list').innerHTML = myPicksHtml(arr) + arr.map(p => placeLi(p, st[p.id] || {})).join('');
       return;
     }
 
     let html = '';
     if(arr.length){
-      html += arr.map(p => { const s = st[p.id] || {};
-        return `<li class="pitem" data-id="${esc(p.id)}"><span class="dot" style="background:${catColor(p.category)}"></span><div class="body">
-          <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.address || '주소 없음')}</div>
-          <div class="meta">${p.rating?`<span class="stars">${starText(p.rating)}</span>`:''}${s.n?`<span>${s.n}번 다녀옴 · 마지막 ${shortDate(s.last)}</span>`:''}${s.next?`<b>예정 ${shortDate(s.next)}</b>`:''}${p.lat==null?'<span>위치 없음</span>':''}</div>
-        </div></li>`; }).join('');
+      html += myPicksHtml(arr) + arr.map(p => placeLi(p, st[p.id] || {})).join('');
     } else {
       html += `<li class="psection-empty">"${esc(S.cat)}"에 저장된 내 장소가 아직 없어요.</li>`;
     }
 
-    /* 카테고리 선택 시 아래에 현재 위치 기준 추천 장소 3곳 섹션 표시 */
-    html += `<li class="psection"><span>${esc(S.cat)} 추천 · 현재 위치 기준</span><small>agy 선별 3곳</small></li>`;
+    /* 카테고리 선택 시 아래에 현재 위치 근처 새 장소 3곳 (집은 제외) */
+    if(S.cat === '집'){ $('#list').innerHTML = html; return; }
+    html += `<li class="psection"><span>근처 새로운 ${esc(S.cat)} · 현재 위치 기준</span><small>3곳</small></li>`;
     if(S.recLoading){
-      html += `<li class="psection-loading">현재 위치 주변의 ${esc(S.cat)} 후보들을 agy가 기준에 맞춰 고르는 중…</li>`;
+      html += `<li class="psection-loading">현재 위치 주변의 ${esc(S.cat)}을(를) 찾는 중…</li>`;
     } else if(S.recError){
       html += `<li class="psection-empty">${esc(S.recError)}</li>`;
     } else if(S.recResults.length){
       html += S.recResults.map((r, i) => {
         return `<li class="pitem rec-item" data-rec-index="${i}">
           <div class="rec-head">
-            <div class="rec-name">${esc(r.name)}${r.isSaved ? `<span class="badge visited">가봤음</span>` : `<span class="badge ext">추천</span>`}</div>
+            <div class="rec-name">${esc(r.name)}${r.isSaved ? `<span class="badge mine">내 장소</span>` : `<span class="badge ext">새 장소</span>`}</div>
             <div class="rec-meta"><b>${esc(r.distanceText)}</b>${r.phone ? `<span>· ${esc(r.phone)}</span>` : ''}</div>
           </div>
           <div class="sub">${esc(r.address || '주소 정보 없음')}</div>
           ${r.priceInfo ? `<div class="rec-price">가격: ${esc(r.priceInfo)}</div>` : ''}
-          <div class="rec-reason">💡 <b>선별 이유:</b> ${esc(r.reason)}</div>
+          <div class="rec-reason">${esc(r.reason)}</div>
           <div class="rec-actions">
-            ${r.url ? `<a class="btn small" href="${esc(r.url)}" target="_blank" rel="noopener">지도 보기</a>` : ''}
+            ${r.url ? `<a class="btn small" href="${esc(r.url)}" target="_blank" rel="noopener">카카오 리뷰</a>` : ''}
+            <a class="btn small" href="https://map.naver.com/p/search/${encodeURIComponent(r.name + ' ' + (r.address || '').split(' ').slice(0, 2).join(' '))}" target="_blank" rel="noopener">네이버 리뷰</a>
             ${r.isSaved 
               ? `<button class="btn small" data-rec-saved="${esc(r.savedId)}" type="button">내 장소 보기</button>` 
               : `<button class="btn small primary" data-rec-add="${i}" type="button">＋ 내 장소로 저장</button>`}
@@ -873,7 +903,7 @@ function renderList(){
         </li>`;
       }).join('');
     } else {
-      html += `<li class="psection-empty">현재 위치 주변에서 기준에 맞는 ${esc(S.cat)} 추천 가게를 찾지 못했어요.</li>`;
+      html += `<li class="psection-empty">현재 위치 주변에서 아직 저장 안 한 ${esc(S.cat)}을(를) 찾지 못했어요.</li>`;
     }
     $('#list').innerHTML = html;
     return;
