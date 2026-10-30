@@ -92,6 +92,10 @@ main{flex:1;min-height:0;position:relative}
 .ext-cat{display:inline-block;font-size:11px;font-weight:600;color:var(--muted)}
 
 /* 추천 장소 카드 */
+.recbase{list-style:none;display:flex;gap:6px}
+.recbase .chip{font-size:12px;padding:4px 10px}
+.nearcats{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}
+.nearlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .rec-item{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .rec-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .rec-name{font-weight:700;font-size:16px;overflow-wrap:anywhere}
@@ -403,7 +407,7 @@ function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e)
 /* ───────── 데이터 ───────── */
 let places = [], visits = [], outbox = [];
 /* route: 지도에 경로로 그릴 묶음 {key} (여행 id 또는 "d:날짜"), trip: 열려 있는 여행 상세의 key */
-const S = { tab:'list', cat:'전체', tripFilter:'전체', q:'', sort: lsGet('ms-sort','recent'), route:null, trip:null, fit:true, extResults:[], extLoading:false, recResults:[], recLoading:false, recError:null, recCat:null, myCoords:null };
+const S = { tab:'list', cat:'전체', tripFilter:'전체', q:'', sort: lsGet('ms-sort','recent'), route:null, trip:null, fit:true, extResults:[], extLoading:false, recResults:[], recLoading:false, recError:null, recCat:null, recBase:'me', myCoords:null };
 
 const numOrNull = v => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
 const normP = p => ({ id:String(p.id), name:String(p.name||''), category:String(p.category||''), address:String(p.address||''),
@@ -566,15 +570,18 @@ function myPicks(arr){
 const CAT_GROUP = {카페:'CE7', 음식점:'FD6', 관광지:'AT4', 마트:'MT1', 숙소:'AD5'};
 
 /* 사실만 담은 추천 이유: 거리 · 세부 종류 · 내가 좋아한 곳과 같은 종류인지 */
-function factReason(dist, subCat, liked){
-  const bits = [`여기서 ${fmtDistance(dist)}`];
+function factReason(dist, subCat, liked, from){
+  const bits = [`${from || '여기서'} ${fmtDistance(dist)}`];
   if(subCat) bits.push(subCat);
   if(liked) bits.push(`내가 ${starText(liked.rating)} 준 '${liked.name}'과 같은 ${subCat}`);
   return bits.join(' · ');
 }
 
-function filterAndRankRecommendations(category, candidates, userLat, userLng, criteriaText, savedPlaces){
+/* anchors [{name,lat,lng}]를 주면 거리는 가장 가까운 그 장소에서 잰다 (여행 근처 찾기). fromLabel은 기준 위치 이름 */
+function filterAndRankRecommendations(category, candidates, userLat, userLng, criteriaText, savedPlaces, opts = {}){
   if(!Array.isArray(candidates) || !candidates.length) return [];
+  const { anchors, fromLabel, limit = 3 } = opts;
+  const seen = new Set();
   const criteriaMap = parseCriteria(criteriaText);
   const crit = criteriaMap[category] || { category, condition: '반경 2km 이내, 만족도가 높은 곳', radius: 2000 };
   const maxRadius = crit.radius;
@@ -586,9 +593,13 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
     const cLat = Number(c.y || c.lat);
     const cLng = Number(c.x || c.lng);
     if(isNaN(cLat) || isNaN(cLng)) return;
+    const key = c.id || `${cLat},${cLng}`; if(seen.has(key)) return; seen.add(key);
 
-    let dist;
-    if(c.distance != null && String(c.distance).trim() !== '' && !isNaN(Number(c.distance))){
+    let dist, from = fromLabel;
+    if(anchors && anchors.length){
+      dist = Infinity;
+      for(const a of anchors){ const d = calcDistance(a.lat, a.lng, cLat, cLng); if(d < dist){ dist = d; from = `'${a.name}'에서`; } }
+    } else if(c.distance != null && String(c.distance).trim() !== '' && !isNaN(Number(c.distance))){
       dist = Math.round(Number(c.distance));
     } else {
       dist = calcDistance(userLat, userLng, cLat, cLng);
@@ -626,7 +637,7 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
 
     if(isSaved) return;                                    // 이미 내 장소면 위 목록에 있으니 빼고 새 곳만
     const priceInfo = c.price || c.price_info || null;
-    const reason = factReason(dist, subCat, like);
+    const reason = factReason(dist, subCat, like, from);
 
     scored.push({
       name: pname,
@@ -647,7 +658,7 @@ function filterAndRankRecommendations(category, candidates, userLat, userLng, cr
   });
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 3);
+  return scored.slice(0, limit);
 }
 
 let recSeq = 0;
@@ -664,9 +675,11 @@ async function fetchRecommendations(cat){
   S.recResults = [];
   renderList();
 
-  // 1. 현재 위치 획득
+  // 1. 기준 위치: 지도 가운데 또는 현재 위치
   let lat = null, lng = null;
-  if(S.myCoords && (Date.now() - S.myCoords.ts < 300000)){
+  if(S.recBase === 'map' && map){
+    const c = map.getCenter(); lat = c.getLat(); lng = c.getLng();
+  } else if(S.myCoords && (Date.now() - S.myCoords.ts < 300000)){
     lat = S.myCoords.lat;
     lng = S.myCoords.lng;
   } else if(navigator.geolocation){
@@ -699,6 +712,35 @@ async function fetchRecommendations(cat){
 
   // 2. 카카오 로컬 검색 후보 수집
   const restKey = lsGet('ms-kakao-key', '');
+  const candidates = await searchNear(cat, lat, lng);
+
+  if(seq !== recSeq) return;
+
+  if(!candidates || !candidates.length){
+    S.recLoading = false;
+    S.recResults = [];
+    if(!restKey && !svcPlaces){
+      S.recError = '설정(⋯)에서 카카오 지역 검색 키(REST API)를 등록하시면 현재 위치 기준 최적의 가게를 추천받을 수 있어요.';
+    } else {
+      S.recError = null;
+    }
+    renderList();
+    return;
+  }
+
+  // 3. 점수 매겨 3곳 고르기
+  const top3 = filterAndRankRecommendations(cat, candidates, lat, lng, getCriteriaText(), places,
+    { fromLabel: S.recBase === 'map' && map ? '지도 가운데서' : '여기서' });
+  if(seq !== recSeq) return;
+  S.recResults = top3;
+  S.recLoading = false;
+  S.recError = null;
+  renderList();
+}
+
+/* (lat,lng) 근처에서 그 분류 가게 후보 찾기. REST 키가 있으면 REST, 없거나 실패하면 지도 SDK */
+async function searchNear(cat, lat, lng){
+  const restKey = lsGet('ms-kakao-key', '');
   const critMap = parseCriteria(getCriteriaText());
   const radius = (critMap[cat] && critMap[cat].radius) || 2000;
   let candidates = [];
@@ -722,28 +764,7 @@ async function fetchRecommendations(cat){
   } else {
     candidates = await searchViaSdk(cat, lat, lng, radius);
   }
-
-  if(seq !== recSeq) return;
-
-  if(!candidates || !candidates.length){
-    S.recLoading = false;
-    S.recResults = [];
-    if(!restKey && !svcPlaces){
-      S.recError = '설정(⋯)에서 카카오 지역 검색 키(REST API)를 등록하시면 현재 위치 기준 최적의 가게를 추천받을 수 있어요.';
-    } else {
-      S.recError = null;
-    }
-    renderList();
-    return;
-  }
-
-  // 3. agy 기준 선별 로직 수행
-  const top3 = filterAndRankRecommendations(cat, candidates, lat, lng, getCriteriaText(), places);
-  if(seq !== recSeq) return;
-  S.recResults = top3;
-  S.recLoading = false;
-  S.recError = null;
-  renderList();
+  return candidates;
 }
 
 function searchViaSdk(cat, lat, lng, radius){
@@ -761,9 +782,8 @@ function searchViaSdk(cat, lat, lng, radius){
   });
 }
 
-function addRecToMyPlaces(r){
-  const cat = S.cat && S.cat !== '전체' ? S.cat : (r.category || '기타');
-  const newPlace = normP({
+function recToPlace(r, cat){
+  return normP({
     id: uid(),
     name: r.name,
     category: cat,
@@ -775,6 +795,9 @@ function addRecToMyPlaces(r){
     memo: `[추천] ${r.reason}`,
     rating: 0
   });
+}
+function addRecToMyPlaces(r){
+  const newPlace = recToPlace(r, S.cat && S.cat !== '전체' ? S.cat : (r.category || '기타'));
   savePlace(newPlace);
   r.isSaved = true;
   r.savedId = newPlace.id;
@@ -878,7 +901,9 @@ function renderList(){
 
     /* 카테고리 선택 시 아래에 현재 위치 근처 새 장소 3곳 (집은 제외) */
     if(S.cat === '집'){ $('#list').innerHTML = html; return; }
-    html += `<li class="psection"><span>근처 새로운 ${esc(S.cat)} · 현재 위치 기준</span><small>3곳</small></li>`;
+    const onMap = S.recBase === 'map' && map;
+    html += `<li class="psection"><span>근처 새로운 ${esc(S.cat)} · ${onMap ? '지도 가운데' : '현재 위치'} 기준</span><small>3곳</small></li>`;
+    if(map) html += `<li class="recbase"><button class="chip ${onMap ? '' : 'on'}" data-rec-base="me">지금 위치</button><button class="chip ${onMap ? 'on' : ''}" data-rec-base="map">지도 가운데</button></li>`;
     if(S.recLoading){
       html += `<li class="psection-loading">현재 위치 주변의 ${esc(S.cat)}을(를) 찾는 중…</li>`;
     } else if(S.recError){
@@ -946,6 +971,8 @@ function renderList(){
 }
 
 $('#list').addEventListener('click', e => {
+  const baseBtn = e.target.closest('[data-rec-base]');
+  if(baseBtn){ S.recBase = baseBtn.dataset.recBase; fetchRecommendations(S.cat); return; }
   const recAddBtn = e.target.closest('[data-rec-add]');
   if(recAddBtn){
     e.stopPropagation();
@@ -1443,6 +1470,7 @@ function openTrip(key){
     <div class="stops">${g.vs.length ? g.vs.map((v,i) => stopHtml(v, i, multi)).join('') : '<p class="hint">아직 넣은 장소가 없어요. 아래 <b>＋ 장소 넣기</b>로 내 장소에서 골라 넣으세요.</p>'}</div>
     <div class="row" style="margin-top:10px">
       <button class="btn small primary" id="trAdd">＋ 장소 넣기</button>
+      ${hasGeo ? '<button class="btn small" id="trNear">이 근처 맛집·카페</button>' : ''}
       ${hasGeo && !isWide() ? '<button class="btn small" id="trRoute">지도에서 경로 보기</button>' : ''}
       ${t ? '<button class="btn small" id="trEdit">여행 정보 고치기</button><button class="btn small danger" id="trDel">여행 삭제</button>'
           : '<button class="btn small" id="trWrap">여행으로 묶기</button>'}
@@ -1453,6 +1481,7 @@ function openTrip(key){
   body.querySelector('.stops').onclick = e => { const s = e.target.closest('.stop'); if(!s) return;
     const v = visits.find(x => x.id === s.dataset.vid); if(v) openVisitEditor(v.placeId, v, 'trip'); };
   body.querySelector('#trAdd').onclick = () => openPlacePicker(key);
+  const nb = body.querySelector('#trNear'); if(nb) nb.onclick = () => openTripNearby(key, '음식점');
   const r = body.querySelector('#trRoute');
   if(r) r.onclick = () => { closeSheet(); S.route = {key}; S.fit = true; showMap(); };
   if(t){
@@ -1487,6 +1516,53 @@ function openTripEditor(orig, prefill = {}){
   };
   if(!orig) setTimeout(() => body.querySelector('#tName').focus(), 50);
 }
+/* 여행 근처 찾기: 여행 장소들(최대 5곳) 근처에서 아직 저장 안 한 가게를 찾고, 고르면 내 장소 저장 + 이 여행에 바로 넣기 */
+const NEAR_CATS = ['음식점', '카페', '관광지', '숙소', '마트'];
+let nearSeq = 0;
+async function openTripNearby(key, cat){
+  const g = groupByKey(key); if(!g) return;
+  const anchors = [], ids = new Set();
+  for(const v of g.vs){ const p = placeById(v.placeId);
+    if(p && p.lat != null && !ids.has(p.id)){ ids.add(p.id); anchors.push({name:p.name, lat:p.lat, lng:p.lng}); } }
+  const seq = ++nearSeq;
+  const draw = (inner) => {
+    openSheet(`<div class="sh-title"><h2>${esc(groupTitle(g))} 근처</h2></div>
+      <p class="addr">여행에 넣은 장소 근처에서 아직 저장 안 한 곳을 찾아요.</p>
+      <div class="nearcats">${NEAR_CATS.map(c => `<button class="chip ${c === cat ? 'on' : ''}" data-near="${esc(c)}"><i style="background:${catColor(c)}"></i>${esc(c)}</button>`).join('')}</div>
+      <ul class="nearlist">${inner}</ul>
+      <div class="actions"><button class="btn" id="nbBack">여행으로 돌아가기</button></div>`);
+    const body = $('#sheetBody');
+    body.querySelector('.nearcats').onclick = e => { const b = e.target.closest('[data-near]'); if(b) openTripNearby(key, b.dataset.near); };
+    body.querySelector('#nbBack').onclick = () => openTrip(key);
+  };
+  draw(`<li class="psection-loading">${esc(cat)}을(를) 찾는 중…</li>`);
+
+  const lists = [];
+  for(const a of anchors.slice(0, 5)) lists.push(...(await searchNear(cat, a.lat, a.lng) || []));
+  if(seq !== nearSeq) return;
+  const recs = filterAndRankRecommendations(cat, lists, anchors[0].lat, anchors[0].lng, getCriteriaText(), places, { anchors: anchors.slice(0, 5), limit: 5 });
+  if(!recs.length){
+    draw(`<li class="psection-empty">${!svcPlaces && !lsGet('ms-kakao-key', '') ? '카카오 지도가 뜨는 곳(앱 주소)에서 열어야 찾을 수 있어요.' : `여행 장소 근처에서 아직 저장 안 한 ${esc(cat)}을(를) 찾지 못했어요.`}</li>`);
+    return;
+  }
+  draw(recs.map((r, i) => `<li class="rec-item" data-near-i="${i}">
+      <div class="rec-name">${esc(r.name)}<span class="badge ext">새 장소</span></div>
+      <div class="sub">${esc(r.address || '주소 정보 없음')}</div>
+      <div class="rec-reason">${esc(r.reason)}</div>
+      <div class="rec-actions">
+        ${r.url ? `<a class="btn small" href="${esc(r.url)}" target="_blank" rel="noopener">카카오 리뷰</a>` : ''}
+        <a class="btn small" href="https://map.naver.com/p/search/${encodeURIComponent(r.name + ' ' + (r.address || '').split(' ').slice(0, 2).join(' '))}" target="_blank" rel="noopener">네이버 리뷰</a>
+        <button class="btn small primary" data-near-add="${i}" type="button">＋ 이 여행에 넣기</button>
+      </div></li>`).join(''));
+  $('#sheetBody').querySelector('.nearlist').onclick = e => {
+    const b = e.target.closest('[data-near-add]'); if(!b || b.disabled) return;
+    const r = recs[Number(b.dataset.nearAdd)];
+    const p = recToPlace(r, cat); savePlace(p);
+    saveVisit({id:uid(), placeId:p.id, date:g.start, time:'', note:''});
+    b.disabled = true; b.textContent = '✓ 넣었어요'; toast(`넣었어요 · ${p.name}`);
+  };
+}
+
 /* 여행에 "＋ 장소 넣기" — 내 장소에서 고르면 날짜=여행 시작일로 바로 기록됨 (날짜·시간·메모는 나중에 그 기록을 눌러 고침) */
 function openPlacePicker(key){
   const g0 = groupByKey(key); if(!g0) return;
