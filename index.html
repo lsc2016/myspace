@@ -445,6 +445,11 @@ async function pull(){
     setSync('불러오는 중…');
     const r = await fetch(CFG.SCRIPT_URL + '?token=' + encodeURIComponent(CFG.TOKEN));
     const d = await r.json(); if(d.error) throw new Error(d.error);
+    // 시트 응답 모양이 이상하거나, 시트가 통째로 비어 왔는데 이 기기에는 기록이 있으면 덮어쓰지 않는다
+    if(!Array.isArray(d.places)) throw new Error('bad response');
+    if(!d.places.length && !(d.visits||[]).length && (places.length || visits.length)){
+      setSync('저장소가 비어 있어 이 기기 목록을 그대로 둠','warn'); return;
+    }
     places = splitMeta((d.places||[]).map(normP)); visits = (d.visits||[]).map(normV); homeFirst();
     saveLocal(); renderAll(); setSync('동기화됨','ok');
   }catch(e){ setSync('저장소 연결 안 됨','warn'); }
