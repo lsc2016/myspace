@@ -45,3 +45,50 @@
 - 고친 뒤 `git push` 하면 1~2분 후 앱에 반영된다. 휴대폰·아이패드는 새로고침 또는 앱 완전 종료 후 재실행.
 - 카카오 키는 `lsc2016.github.io` 도메인에서만 동작하므로, 로컬 파일로 열면 지도는 안 뜨고 목록·날짜만 확인 가능.
 - 시트 열을 추가할 때는 Code.gs `SHEETS`와 index.html `normP`/`normV` 둘 다 고치고, Code.gs를 다시 배포해야 한다.
+
+## 폴더 지도 (덧붙임)
+
+- `index.html` — 앱 전체 (위 "파일" 참고). 약 2천 줄이라 `grep`으로 함수 이름을 찾아 그 부분만 읽는다.
+- `config.js` — 카카오 JavaScript 키(도메인 제한 공개 키). 비밀값 넣지 말 것.
+- `criteria.md` — 추천 기준 (카테고리별 한 줄). 같은 기본값이 `index.html`의 `DEFAULT_CRITERIA`에도 들어 있다.
+- `recommend.py`, `test_recommend.py` — 추천 고르기를 파이썬으로 다시 짠 것과 그 시험. 앱(`index.html`)은 이 파일을 쓰지 않는다. 시험은 저장소 맨 위에서 `python3 test_recommend.py`.
+- `manifest.json`, `icon-*.png`, `apple-touch-icon.png` — 홈 화면 아이콘. ⛔ 그림은 열지 않는다.
+- `docs/` — 기획 문서.
+- `진행.md` — 진행 기록.
+- `sinseonjeon/` — ⛔ **다른 프로젝트 것.** "신선전"(운영자 유튜브 채널에 영상을 올리는 개인 도구)의 소개·개인정보처리방침·약관 페이지. 구글(YouTube) 앱 심사용으로 이 GitHub Pages 주소에 올려 둔 것으로 추정. `youtube_analytics` 저장소 문서·코드에 "신선전" 이름이 나온다. 나의 공간과 상관없으니 건드리지 않는다 (10월 21일 정함).
+
+## 고치는 규칙 (덧붙임)
+
+- 사람이 승인하기 전에 데이터 파일·설정 파일(`config.js`, `criteria.md`, 시트 데이터)을 지우거나 덮어쓰지 않기.
+- 삭제 명령(rm -rf 등)은 쓰지 않기.
+- 어느 화면에서든 첫 화면으로 돌아갈 길을 없애지 않기. (지금은 제목줄 아래 "장소" 탭이 첫 화면. 제목 "나의 공간"은 눌러도 반응 없음.)
+
+## 읽는 양 줄이기
+
+| 이런 일이면 | 이 파일만 읽어라 |
+|---|---|
+| 시트 저장·동기화 | `index.html`의 `api`/`flush`/`pull`/`normP`/`normV`/`splitMeta` 근처 |
+| 여행 묶음·날짜 탭 | `docs/기획-여행묶음.md` + `index.html`의 trip 관련 함수 |
+| 추천 | `criteria.md` + `index.html`의 `filterAndRankRecommendations`/`fetchRecommendations` |
+| 지도·내비 | `index.html`의 `initKakao`/`renderMap` 근처 |
+| 지금 상태·다음 할 일 | `진행.md` |
+
+열지 말 것: `*.png`, `sinseonjeon/`.
+
+## 다른 프로젝트와의 연결
+
+- `sinseonjeon/` 페이지는 신선전(유튜브 도구, `youtube_analytics` 쪽으로 추정)이 쓰는 공개 주소. 지우거나 옮기면 그쪽 구글 앱 설정의 링크가 깨질 수 있다 (추정).
+- 그 밖에 다른 저장소 파일을 읽거나 쓰지 않는다. 바깥 서비스: 카카오 지도 SDK·카카오 로컬 검색 API, 구글 시트(Apps Script).
+
+## 저장소 밖
+
+- `Code.gs` — Apps Script 서버 코드 (암호 포함, .gitignore). 구글 Apps Script 편집기에만 있다.
+- 구글 시트 자체 (탭 `places`, `visits`).
+- 기기마다 브라우저 localStorage: `ms-conn`(저장소 주소·암호), `ms-kakao-key`(카카오 REST 키, 설정 화면에서 입력), `ms-data`, `ms-outbox`, `ms-criteria`.
+- `test_recommend.py` 머리말에 적힌 기획서 `2026-10-30_기준으로-근처-가게-3곳-추천하기.md` — 저장소에 없음.
+
+## 모르는 것
+
+- `recommend.py`를 앞으로도 쓸지 (앱은 안 씀, 시험만 씀) — 확인 필요.
+- 문서에 나오는 "agy"가 누구/무엇인지 — 확인 필요.
+- `sinseonjeon/`을 어느 프로젝트가 실제로 링크하는지 — 확인 필요.
